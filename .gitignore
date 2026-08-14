@@ -42,3 +42,8 @@ Thumbs.db
 # Local secrets
 .env
 .env.*
+.dev.vars
+.wrangler/
+node_modules/
+*.cpuprofile
+.xiaozhi-cloudflare-config.json
