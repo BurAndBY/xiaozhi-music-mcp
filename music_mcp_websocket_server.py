@@ -12,6 +12,7 @@ import os
 import websockets
 from typing import Dict, Any, List
 from datetime import datetime
+from yandex_music_provider import provider
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -25,20 +26,6 @@ playback_state = {
     "position": 0,
     "playlist": []
 }
-
-# 模拟音乐数据库
-MOCK_MUSIC_DATABASE = [
-    {"id": "1", "name": "青花瓷", "artist": "周杰伦", "album": "我很忙", "duration": 238},
-    {"id": "2", "name": "稻香", "artist": "周杰伦", "album": "魔杰座", "duration": 223},
-    {"id": "3", "name": "夜曲", "artist": "周杰伦", "album": "十一月的萧邦", "duration": 237},
-    {"id": "4", "name": "告白气球", "artist": "周杰伦", "album": "周杰伦的床边故事", "duration": 207},
-    {"id": "5", "name": "晴天", "artist": "周杰伦", "album": "叶惠美", "duration": 269},
-    {"id": "6", "name": "演员", "artist": "薛之谦", "album": "绅士", "duration": 253},
-    {"id": "7", "name": "体面", "artist": "于文文", "album": "体面", "duration": 247},
-    {"id": "8", "name": "成都", "artist": "赵雷", "album": "无法长大", "duration": 327},
-    {"id": "9", "name": "南山南", "artist": "马頔", "album": "孤岛", "duration": 293},
-    {"id": "10", "name": "理想", "artist": "赵雷", "album": "吉姆餐厅", "duration": 279}
-]
 
 class MCPWebSocketServer:
     """MCP WebSocket服务器"""
@@ -237,28 +224,13 @@ class MCPWebSocketServer:
 
 # 音乐搜索API
 async def search_music_api(query: str, limit: int = 10) -> List[Dict[str, Any]]:
-    """搜索音乐API"""
-    # 模拟搜索延迟
-    await asyncio.sleep(0.1)
-    
-    # 简单的关键词匹配
-    results = []
-    query_lower = query.lower()
-    
-    for song in MOCK_MUSIC_DATABASE:
-        if (query_lower in song["name"].lower() or 
-            query_lower in song["artist"].lower() or 
-            query_lower in song["album"].lower()):
-            results.append(song)
-            
-        if len(results) >= limit:
-            break
-    
-    # 如果没有匹配结果，返回一些默认结果
-    if not results:
-        results = MOCK_MUSIC_DATABASE[:limit]
-    
-    return results
+    """Search Yandex Music through the ym.marshal.dev client library."""
+    return await provider.search(query, limit)
+
+async def get_stream_url_handler(arguments: Dict[str, Any]) -> str:
+    song_id = arguments["song_id"]
+    url = await provider.get_stream_url(song_id)
+    return json.dumps({"song_id": song_id, "url": url}, ensure_ascii=False)
 
 # 工具处理函数
 async def search_music_handler(arguments: Dict[str, Any]) -> str:
@@ -280,16 +252,22 @@ async def play_music_handler(arguments: Dict[str, Any]) -> str:
     song_id = arguments["song_id"]
     song_name = arguments.get("song_name", "未知歌曲")
     artist = arguments.get("artist", "未知歌手")
+    url = await provider.get_stream_url(song_id)
     
     playback_state["current_song"] = {
         "id": song_id,
         "name": song_name,
-        "artist": artist
+        "artist": artist,
+        "url": url
     }
     playback_state["is_playing"] = True
     playback_state["position"] = 0
     
-    return f"正在播放: {song_name} - {artist}"
+    return json.dumps({
+        "message": f"正在播放: {song_name} - {artist}",
+        "song_id": song_id,
+        "url": url
+    }, ensure_ascii=False)
 
 async def pause_music_handler(arguments: Dict[str, Any]) -> str:
     playback_state["is_playing"] = False
@@ -429,6 +407,14 @@ async def main():
         },
         "required": ["song_id"]
     }, play_music_handler)
+
+    server.add_tool("get_stream_url", "获取歌曲的可播放音频URL", {
+        "type": "object",
+        "properties": {
+            "song_id": {"type": "string", "description": "搜索结果中的歌曲ID"}
+        },
+        "required": ["song_id"]
+    }, get_stream_url_handler)
     
     server.add_tool("pause_music", "暂停音乐", {
         "type": "object",

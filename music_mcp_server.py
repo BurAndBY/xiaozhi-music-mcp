@@ -9,8 +9,8 @@ import asyncio
 import json
 import sys
 from typing import Any, Dict, List, Optional
-import httpx
 import logging
+from yandex_music_provider import provider
 
 # 简化的MCP服务器实现
 class MCPServer:
@@ -85,13 +85,6 @@ logger = logging.getLogger(__name__)
 # 创建MCP服务器实例
 server = MCPServer("music-mcp-server")
 
-# 免费音乐API配置
-MUSIC_APIS = {
-    "netease": "https://music.163.com/api",
-    "qq": "https://c.y.qq.com/v8/fcg-bin/fcg_play_single_song.fcg",
-    "kugou": "http://mobilecdn.kugou.com/api/v3/search/song"
-}
-
 # 当前播放状态
 playback_state = {
     "current_song": None,
@@ -106,28 +99,13 @@ server.add_resource("music://playlist", "当前播放列表", "显示当前的�
 server.add_resource("music://current", "当前播放", "显示当前正在播放的歌曲信息")
 
 async def search_music_api(query: str, limit: int = 10) -> List[Dict[str, Any]]:
-    """调用免费音乐API搜索歌曲"""
-    # 这里使用模拟数据，实际使用时可以接入真实的免费音乐API
-    mock_results = [
-        {
-            "id": f"song_{i}",
-            "name": f"搜索结果 {i}: {query}",
-            "artist": f"歌手 {i}",
-            "album": f"专辑 {i}",
-            "duration": 240,
-            "url": f"https://music.example.com/song_{i}.mp3"
-        }
-        for i in range(1, min(limit + 1, 6))
-    ]
-    
-    # 实际项目中，这里应该调用真实的音乐API
-    # 例如：
-    # async with httpx.AsyncClient() as client:
-    #     response = await client.get(f"{MUSIC_APIS['netease']}/search", params={"keywords": query})
-    #     data = response.json()
-    #     return parse_search_results(data)
-    
-    return mock_results
+    """Search Yandex Music through the ym.marshal.dev client library."""
+    return await provider.search(query, limit)
+
+async def get_stream_url_handler(arguments: Dict[str, Any]) -> str:
+    song_id = arguments["song_id"]
+    url = await provider.get_stream_url(song_id)
+    return json.dumps({"song_id": song_id, "url": url}, ensure_ascii=False)
 
 # 工具处理函数
 async def search_music_handler(arguments: Dict[str, Any]) -> str:
@@ -149,16 +127,22 @@ async def play_music_handler(arguments: Dict[str, Any]) -> str:
     song_id = arguments["song_id"]
     song_name = arguments.get("song_name", "未知歌曲")
     artist = arguments.get("artist", "未知歌手")
+    url = await provider.get_stream_url(song_id)
     
     playback_state["current_song"] = {
         "id": song_id,
         "name": song_name,
-        "artist": artist
+        "artist": artist,
+        "url": url
     }
     playback_state["is_playing"] = True
     playback_state["position"] = 0
     
-    return f"正在播放: {song_name} - {artist}"
+    return json.dumps({
+        "message": f"正在播放: {song_name} - {artist}",
+        "song_id": song_id,
+        "url": url
+    }, ensure_ascii=False)
 
 async def pause_music_handler(arguments: Dict[str, Any]) -> str:
     playback_state["is_playing"] = False
@@ -279,6 +263,14 @@ async def main():
         },
         "required": ["song_id"]
     }, play_music_handler)
+
+    server.add_tool("get_stream_url", "获取歌曲的可播放音频URL", {
+        "type": "object",
+        "properties": {
+            "song_id": {"type": "string", "description": "搜索结果中的歌曲ID"}
+        },
+        "required": ["song_id"]
+    }, get_stream_url_handler)
     
     server.add_tool("pause_music", "暂停音乐", {
         "type": "object",

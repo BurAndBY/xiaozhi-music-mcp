@@ -7,7 +7,7 @@ services:
     startCommand: python3 music_mcp_websocket_server.py
     envVars:
       - key: PYTHON_VERSION
-        value: 3.9.18
-      - key: PORT
-        value: 8765
+        value: 3.11.9
+      - key: YANDEX_MUSIC_TOKEN
+        sync: false
     autoDeploy: false

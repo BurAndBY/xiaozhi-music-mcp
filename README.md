@@ -27,6 +27,19 @@ cd /Users/a1234/Documents/music
 pip3 install -r requirements.txt
 ```
 
+Set a Yandex Music OAuth token before starting the server. Token instructions are at
+https://ym.marshal.dev/token/.
+
+```bash
+export YANDEX_MUSIC_TOKEN="your-token"
+```
+
+On PowerShell:
+
+```powershell
+$env:YANDEX_MUSIC_TOKEN="your-token"
+```
+
 ### 3. 测试服务器
 
 ```bash
@@ -85,6 +98,7 @@ python3 music_mcp_server.py
 |---------|---------|------|
 | search_music | 搜索音乐 | query（搜索关键词）, limit（结果数量） |
 | play_music | 播放指定歌曲 | song_id（歌曲ID）, song_name, artist |
+| get_stream_url | 获取可播放音频URL | song_id（搜索结果中的歌曲ID） |
 | pause_music | 暂停播放 | 无 |
 | resume_music | 继续播放 | 无 |
 | stop_music | 停止播放 | 无 |
@@ -106,7 +120,7 @@ python3 music_mcp_server.py
 
 ### 接入真实音乐API
 
-当前版本使用模拟数据，您可以修改 `search_music_api` 函数来接入真实的免费音乐API：
+当前版本通过 [yandex-music](https://ym.marshal.dev/) 客户端接入 Yandex Music。
 
 ```python
 async def search_music_api(query: str, limit: int = 10) -> List[Dict[str, Any]]:

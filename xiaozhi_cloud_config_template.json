@@ -59,6 +59,20 @@
           }
         },
         {
+          "name": "get_stream_url",
+          "description": "获取歌曲的可播放音频URL",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "song_id": {
+                "type": "string",
+                "description": "搜索结果中的歌曲ID"
+              }
+            },
+            "required": ["song_id"]
+          }
+        },
+        {
           "name": "pause_music",
           "description": "暂停音乐",
           "inputSchema": {
