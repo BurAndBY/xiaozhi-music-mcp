@@ -7,5 +7,13 @@
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1
-  }
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "CONNECTOR", "class_name": "XiaozhiConnector" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["XiaozhiConnector"] }
+  ]
 }

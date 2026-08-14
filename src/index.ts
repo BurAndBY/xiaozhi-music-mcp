@@ -1,4 +1,5 @@
 import SparkMD5 from "spark-md5";
+import { DurableObject } from "cloudflare:workers";
 
 type Env = Cloudflare.Env;
 
@@ -290,40 +291,90 @@ async function secretsEqual(left: string, right: string): Promise<boolean> {
   return difference === 0;
 }
 
+export class XiaozhiConnector extends DurableObject<Env> {
+  private socket: WebSocket | null = null;
+  private state: PlaybackState = newState();
+  private connectedAt: string | null = null;
+  private lastError: string | null = null;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.ctx.blockConcurrencyWhile(async () => {
+      await this.ctx.storage.setAlarm(Date.now() + 1_000);
+    });
+  }
+
+  async ensureConnected(): Promise<{ connected: boolean; connectedAt: string | null; error: string | null }> {
+    if (this.socket?.readyState === WebSocket.OPEN) return this.status();
+
+    try {
+      const endpoint = new URL(this.env.XIAOZHI_MCP_ENDPOINT);
+      endpoint.protocol = endpoint.protocol === "wss:" ? "https:" : "http:";
+      const response = await fetch(endpoint, { headers: { Upgrade: "websocket" } });
+      const socket = response.webSocket;
+      if (response.status !== 101 || !socket) throw new Error(`Xiaozhi WebSocket returned HTTP ${response.status}`);
+
+      socket.accept();
+      this.socket = socket;
+      this.connectedAt = new Date().toISOString();
+      this.lastError = null;
+      socket.addEventListener("message", (event) => this.ctx.waitUntil(this.handleMessage(event)));
+      socket.addEventListener("close", () => this.ctx.waitUntil(this.scheduleReconnect("Connection closed")));
+      socket.addEventListener("error", () => this.ctx.waitUntil(this.scheduleReconnect("WebSocket error")));
+      await this.ctx.storage.deleteAlarm();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Unknown connection error";
+      this.lastError = detail.replaceAll(this.env.XIAOZHI_MCP_ENDPOINT, "[XIAOZHI_MCP_ENDPOINT]");
+      await this.ctx.storage.setAlarm(Date.now() + 30_000);
+    }
+    return this.status();
+  }
+
+  status(): { connected: boolean; connectedAt: string | null; error: string | null } {
+    return {
+      connected: this.socket?.readyState === WebSocket.OPEN,
+      connectedAt: this.connectedAt,
+      error: this.lastError,
+    };
+  }
+
+  async alarm(): Promise<void> {
+    await this.ensureConnected();
+  }
+
+  private async handleMessage(event: MessageEvent): Promise<void> {
+    const socket = this.socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+
+    let rpc: RpcRequest | undefined;
+    try {
+      const parsed: unknown = JSON.parse(
+        typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data as ArrayBuffer),
+      );
+      if (typeof parsed !== "object" || parsed === null) throw new Error("JSON-RPC request must be an object");
+      rpc = parsed as RpcRequest;
+      const result = await handleRpc(rpc, this.state, this.env);
+      if (result !== null) socket.send(JSON.stringify({ jsonrpc: "2.0", id: rpc.id ?? null, result }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      socket.send(JSON.stringify({ jsonrpc: "2.0", id: rpc?.id ?? null, error: { code: -32603, message } }));
+    }
+  }
+
+  private async scheduleReconnect(reason: string): Promise<void> {
+    this.socket = null;
+    this.lastError = reason;
+    await this.ctx.storage.setAlarm(Date.now() + 5_000);
+  }
+}
+
 export default {
   async fetch(request, env): Promise<Response> {
     const url = new URL(request.url);
-    if (request.headers.get("Upgrade") !== "websocket") {
-      return Response.json({ status: "ok", service: "xiaozhi-music-mcp" });
-    }
-
     const accessToken = url.searchParams.get("access_token") ?? "";
     if (!(await secretsEqual(accessToken, env.MCP_ACCESS_TOKEN))) return new Response("Unauthorized", { status: 401 });
-
-    const pair = new WebSocketPair();
-    const client = pair[0];
-    const server = pair[1];
-    server.accept();
-    const state = newState();
-
-    server.addEventListener("message", (event) => {
-      void (async () => {
-        let rpc: RpcRequest | undefined;
-        try {
-          const parsed: unknown = JSON.parse(
-            typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data),
-          );
-          if (typeof parsed !== "object" || parsed === null) throw new Error("JSON-RPC request must be an object");
-          rpc = parsed as RpcRequest;
-          const result = await handleRpc(rpc, state, env);
-          if (result !== null) server.send(JSON.stringify({ jsonrpc: "2.0", id: rpc.id ?? null, result }));
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "Unknown error";
-          server.send(JSON.stringify({ jsonrpc: "2.0", id: rpc?.id ?? null, error: { code: -32603, message } }));
-        }
-      })();
-    });
-
-    return new Response(null, { status: 101, webSocket: client });
+    const connector = env.CONNECTOR.getByName("primary");
+    const status = url.pathname === "/connect" ? await connector.ensureConnected() : await connector.status();
+    return Response.json({ service: "xiaozhi-music-mcp", ...status });
   },
 } satisfies ExportedHandler<Env>;

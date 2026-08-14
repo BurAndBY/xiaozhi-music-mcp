@@ -47,3 +47,4 @@ Thumbs.db
 node_modules/
 *.cpuprofile
 .xiaozhi-cloudflare-config.json
+.cf-secrets.json
