@@ -253,6 +253,7 @@ async function handleRpc(request: RpcRequest, state: PlaybackState, env: Env): P
       serverInfo: { name: "xiaozhi-music-mcp", version: "2.0.0" },
     };
   }
+  if (request.method === "ping") return {};
   if (request.method === "tools/list") return { tools };
   if (request.method === "tools/call") {
     const name = request.params?.name;
@@ -296,6 +297,9 @@ export class XiaozhiConnector extends DurableObject<Env> {
   private state: PlaybackState = newState();
   private connectedAt: string | null = null;
   private lastError: string | null = null;
+  private lastMessageAt: string | null = null;
+  private messageCount = 0;
+  private lastClose: { code: number; reason: string } | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -304,7 +308,7 @@ export class XiaozhiConnector extends DurableObject<Env> {
     });
   }
 
-  async ensureConnected(): Promise<{ connected: boolean; connectedAt: string | null; error: string | null }> {
+  async ensureConnected(): Promise<ReturnType<XiaozhiConnector["status"]>> {
     if (this.socket?.readyState === WebSocket.OPEN) return this.status();
 
     try {
@@ -318,9 +322,18 @@ export class XiaozhiConnector extends DurableObject<Env> {
       this.socket = socket;
       this.connectedAt = new Date().toISOString();
       this.lastError = null;
+      this.lastClose = null;
+      console.log(JSON.stringify({ event: "xiaozhi_connected", connectedAt: this.connectedAt }));
       socket.addEventListener("message", (event) => this.ctx.waitUntil(this.handleMessage(event)));
-      socket.addEventListener("close", () => this.ctx.waitUntil(this.scheduleReconnect("Connection closed")));
-      socket.addEventListener("error", () => this.ctx.waitUntil(this.scheduleReconnect("WebSocket error")));
+      socket.addEventListener("close", (event) => {
+        this.lastClose = { code: event.code, reason: event.reason };
+        console.log(JSON.stringify({ event: "xiaozhi_closed", code: event.code, reason: event.reason }));
+        this.ctx.waitUntil(this.scheduleReconnect(`Connection closed (${event.code})`));
+      });
+      socket.addEventListener("error", () => {
+        console.error(JSON.stringify({ event: "xiaozhi_socket_error" }));
+        this.ctx.waitUntil(this.scheduleReconnect("WebSocket error"));
+      });
       await this.ctx.storage.deleteAlarm();
     } catch (error) {
       const detail = error instanceof Error ? error.message : "Unknown connection error";
@@ -330,11 +343,21 @@ export class XiaozhiConnector extends DurableObject<Env> {
     return this.status();
   }
 
-  status(): { connected: boolean; connectedAt: string | null; error: string | null } {
+  status(): {
+    connected: boolean;
+    connectedAt: string | null;
+    error: string | null;
+    lastMessageAt: string | null;
+    messageCount: number;
+    lastClose: { code: number; reason: string } | null;
+  } {
     return {
       connected: this.socket?.readyState === WebSocket.OPEN,
       connectedAt: this.connectedAt,
       error: this.lastError,
+      lastMessageAt: this.lastMessageAt,
+      messageCount: this.messageCount,
+      lastClose: this.lastClose,
     };
   }
 
@@ -353,6 +376,9 @@ export class XiaozhiConnector extends DurableObject<Env> {
       );
       if (typeof parsed !== "object" || parsed === null) throw new Error("JSON-RPC request must be an object");
       rpc = parsed as RpcRequest;
+      this.lastMessageAt = new Date().toISOString();
+      this.messageCount += 1;
+      console.log(JSON.stringify({ event: "xiaozhi_message", method: rpc.method, id: rpc.id ?? null }));
       const result = await handleRpc(rpc, this.state, this.env);
       if (result !== null) socket.send(JSON.stringify({ jsonrpc: "2.0", id: rpc.id ?? null, result }));
     } catch (error) {
