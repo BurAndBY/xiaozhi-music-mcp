@@ -8,12 +8,17 @@
     "enabled": true,
     "head_sampling_rate": 1
   },
+  "vars": {
+    "PUBLIC_BASE_URL": "https://xiaozhi-music-mcp.burandby.workers.dev"
+  },
   "durable_objects": {
     "bindings": [
-      { "name": "CONNECTOR", "class_name": "XiaozhiConnector" }
+      { "name": "CONNECTOR", "class_name": "XiaozhiConnector" },
+      { "name": "NOTIFICATIONS", "class_name": "NotificationScheduler" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["XiaozhiConnector"] }
+    { "tag": "v1", "new_sqlite_classes": ["XiaozhiConnector"] },
+    { "tag": "v2", "new_sqlite_classes": ["NotificationScheduler"] }
   ]
 }

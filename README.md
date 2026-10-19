@@ -142,6 +142,18 @@ async def search_music_api(query: str, limit: int = 10) -> List[Dict[str, Any]]:
 
 ## 故障排除
 
+### 本地验证设备路由
+
+无需连接真实设备即可验证 Worker 是否发出设备播放调用：
+
+```powershell
+python tools/mcp_endpoint_simulator.py
+```
+
+Point a local Worker test run at `ws://127.0.0.1:8765`. The simulator logs
+every routed `self.audio.play_stream` call and acknowledges it as a fake
+device.
+
 ### 常见问题
 
 **Q: 服务器启动失败**
@@ -171,3 +183,33 @@ PYTHON_LOG_LEVEL=DEBUG python3 music_mcp_server.py
 ---
 
 **注意**: 请确保遵守相关音乐版权法律法规，仅使用合法的音乐资源。
+# Spoken notifications
+
+The Worker exposes persistent Fish Audio notification tools:
+
+- `create_notification({ cron?, delay_seconds?, at?, text, timezone?, reference_id? })`
+- `list_notifications({})`
+- `cancel_notification({ id })`
+
+Cron expressions use five fields (`minute hour day-of-month month day-of-week`). For a one-shot reminder, use `delay_seconds` for a relative delay or `at` for a local clock time such as `20:55`. Fractional delays are rounded to the nearest second, so `10.52` becomes 11 seconds. Provide exactly one of `cron`, `delay_seconds`, or `at`.
+
+Notifications use the public Kokoro service at `https://tts.13806490.xyz/v1/audio/speech`; no TTS secret is required.
+
+Example:
+
+```json
+{
+  "cron": "0 9 * * 1-5",
+  "text": "[excited] Доброе утро! Пора начинать день.",
+  "timezone": "Europe/Minsk"
+}
+```
+
+One-shot example:
+
+```json
+{
+  "delay_seconds": 10.52,
+  "text": "Покушать"
+}
+```
